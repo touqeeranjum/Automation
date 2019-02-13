@@ -1,8 +1,8 @@
 #!/bin/bash
-# by: Anjum Touqeer
-# Date: 31 Dec 2018
-# Function: This script creates a Primary DNS Server
-# Script: dnsPrimary.sh
+#by: Anjum Touqeer
+#Date: 31 Dec 2018
+#Function: This script creates a Primary DNS Server
+#Script: dnsPrimary.sh
 
 echo $'~~~~~~~~~~~ Acquiring IP ~~~~~~~~~~~'
 dhclient -r
