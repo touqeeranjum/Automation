@@ -1,0 +1,122 @@
+echo $'~~~~~~~~~~~ Acquiring IP ~~~~~~~~~~~'
+dhclient -r
+dhclient -v
+echo $'~~~~~~~~~~~ IP Acquired ~~~~~~~~~~~\n'
+
+echo $'~~~~~~~~~~~ Installing BIND for DNS ~~~~~~~~~~~'
+yum clean all
+yum install bind bind-utils -y
+echo $'~~~~~~~~~~~ BIND Installed ~~~~~~~~~~~\n'
+
+newuid=$(uuidgen ens33) # generating new Unique ID for network interface
+
+echo $'~~~~~~~~~~~ Network interface configuration backed up ~~~~~~~~~~~\n'
+cp /etc/sysconfig/network-scripts/ifcfg-ens33 /etc/sysconfig/network-scripts/ifcfg-ens33.bk
+
+cat > /etc/sysconfig/network-scripts/ifcfg-ens33 <<- EOF
+TYPE=Ethernet
+PROXY_METHOD=none
+BROWSER_ONLY=no
+BOOTPROTO=static
+DEFROUTE=yes
+IPV4_FAILURE_FATAL=no
+IPV6INIT=yes
+IPV6_AUTOCONF=yes
+IPV6_DEFROUTE=yes
+IPV6_FAILURE_FATAL=no
+IPV6_ADDR_GEN_MODE=stable-privacy
+NAME=ens33
+UUID=$newuuid
+DEVICE=ens33
+HOSTNAME=ns2
+IPADDR=192.168.102.192
+NETMASK=255.255.255.0
+ADAPTER=ens33
+GATEWAY=192.168.102.2
+DNS1=192.168.102.2
+NM_CONTROLLED=no
+ONBOOT=yes
+EOF
+cat > /etc/hostname <<- EOF
+ns2
+EOF
+systemctl restart network
+echo $'~~~~~~~~~~~ Interface configured, network service restarted ~~~~~~~~~~~\n'
+
+echo $'~~~~~~~~~~~ Beginning DNS configuration ~~~~~~~~~~~'
+cp  /etc/named.conf /etc/named.bk
+
+cat > /etc/named.conf <<- EOF
+//
+// named.conf
+//
+// Provided by Red Hat bind package to configure the ISC BIND named(8) DNS
+// server as a caching only nameserver (as a localhost DNS resolver only).
+//
+// See /usr/share/doc/bind*/sample/ for example named configuration files.
+//
+// See the BIND Administrator's Reference Manual (ARM) for details about the
+// configuration located in /usr/share/doc/bind-{version}/Bv9ARM.html
+
+acl internals { 192.168.102.0/24; };
+
+options {
+        listen-on port 53 { 127.0.0.1; 192.168.102.192; };
+        directory       "/var/named";
+        dump-file       "/var/named/data/cache_dump.db";
+        statistics-file "/var/named/data/named_stats.txt";
+        memstatistics-file "/var/named/data/named_mem_stats.txt";
+        recursing-file  "/var/named/data/named.recursing";
+        secroots-file   "/var/named/data/named.secroots";
+        allow-notify { 192.168.102.191; };
+        allow-query { localhost; internals; };
+        recursion yes;
+        /* Path to ISC DLV key */
+        bindkeys-file "/etc/named.iscdlv.key";
+
+        managed-keys-directory "/var/named/dynamic";
+
+        pid-file "/run/named/named.pid";
+        session-keyfile "/run/named/session.key";
+};
+
+logging {
+        channel default_debug {
+                file "data/named.run";
+                severity dynamic;
+        };
+};
+
+zone "." IN {
+        type hint;
+        file "named.ca";
+};
+
+zone "L00144445.local" { type slave; masters { 192.168.102.191; }; file "L00144445.db"; allow-transfer { 192.168.102.191; }; notify yes; };
+
+zone "102.168.192.IN-ADDR.ARPA" { type slave; masters { 192.168.102.191; }; file "54444100L.db"; allow-transfer { 192.168.102.191; }; notify yes; };
+
+include "/etc/named.rfc1912.zones";
+include "/etc/named.root.key";
+EOF
+echo $'\n~~~~~~~~~~~ DNS configuration complete ~~~~~~~~~~~\n'
+
+firewall-cmd --permanent --add-port=53/tcp
+firewall-cmd --permanent --add-port=53/udp
+firewall-cmd --reload
+echo $'~~~~~~~~~~~ DNS rule added, firewall reloaded ~~~~~~~~~~~\n'
+
+echo "RESOLVCONF=yes" >> /etc/sysconfig/named
+echo "OPTIONS=-4" >> /etc/sysconfig/named
+echo $'~~~~~~~~~~~ Configured named for IPv4 ~~~~~~~~~~~\n'
+
+echo $'~~~~~~~~~~~ Checking DNS configuration file ~~~~~~~~~~~'
+named-checkconf -z
+
+systemctl enable named
+systemctl start named
+echo $'\n~~~~~~~~~~~ BIND DNS service started ~~~~~~~~~~~\n'
+
+echo $'~~~~~~~~~~~ Shell reloaded ~~~~~~~~~~~'
+hostname -F /etc/hostname
+exec -l bash
