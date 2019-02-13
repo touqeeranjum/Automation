@@ -1,0 +1,82 @@
+#!/bin/bash
+#By: Anjum Touqeer
+#Date: 26 Dec 2018
+#Function: This script removes chrony, installs NTP, and configures it to synchronise time from Singapore time servers
+#Script: NTP.sh
+#Prerequisite : Internet connection, NTP, Root access
+
+echo Releasing IP address
+dhclient -r # Release IP
+echo Acquiring new IP address
+dhclient -v # Reacquire IP showing on screen the process
+echo new IP address acquired
+
+echo Checking current Timezone
+timedatectl | grep "Time zone"
+
+echo Changed to new timezone
+timedatectl set-timezone "Asia/Singapore" # Set timezone to Singapore
+timedatectl | grep "Time zone"
+
+echo installing NTP
+yum install ntp -y # Installs NTP without user intervention using the -y switch
+echo NTP Install Complete
+
+echo starting NTPD Service
+systemctl start ntpd
+echo Enabling NTPD Service
+systemctl enable ntpd
+echo Checking NTPD Service Status
+systemctl status ntpd # Checking NTPD status
+
+echo Adding allow UDP packet rule in IPTables
+iptables -A INPUT -p udp -m state --state NEW -m udp --dport 123 -j ACCEPT # Adding firewall rule to allow udp packets
+
+echo Backing up ntp.conf file
+mv /etc/ntp.conf /etc/ntp.conf.bk # Backing up existing ntp.conf file
+
+echo Adding Singapore Time Servers to ntp.conf file
+cat > /etc/ntp.conf <<- EOF # Creating  new file to with added Singapore Time Server entries
+# For more information about this file, see the man pages
+# ntp.conf(5), ntp_acc(5), ntp_auth(5), ntp_clock(5), ntp_misc(5), ntp_mon(5).
+
+driftfile /var/lib/ntp/drift
+
+# Permit time synchronization with our time source, but do not permit the source to query or modify the service on this system.
+restrict default nomodify notrap nopeer noquery
+
+# Permit all access over the loopback interface. This could be tightened as well, but to do so would effect some of the administrative functions.
+restrict 127.0.0.1
+restrict ::1
+
+# Hosts on local network are less restricted.
+restrict 192.168.102.0 mask 255.255.255.0 nomodify notrap # The nomodify options changing the configuration, The notrap option prevents ntpdc control message protocol traps.
+# Use public servers from the pool.ntp.org project.
+# Please consider joining the pool (http://www.pool.ntp.org/join.html).
+server 0.sg.pool.ntp.org iburst
+server 1.sg.pool.ntp.org iburst
+server 2.sg.pool.ntp.org iburst
+server 3.sg.pool.ntp.org iburst
+
+#broadcast 192.168.1.255 autokey        # broadcast server
+#broadcastclient                        # broadcast client
+#broadcast 224.0.1.1 autokey            # multicast server
+#multicastclient 224.0.1.1             # multicast client
+"ntp.conf" 62L, 2133C
+EOF # Closes the for saving
+
+echo Syncing with Singapore Time Server..
+for i in {15..1}; do echo -n "." && sleep 1; done # Counter added to allow Time Server to sync in the background. The dual ampersand symbols (&&) when joined together achieve 2 tasks, the first ampersand symbol joins the two statements, the second one tells the compiler to perform the function after the second & sign. The sleep is command pauses execution for the number specified after it. The -n stops the compiler from creating a new line after each loop.
+echo # Displaying the incrementing counter dots
+
+ntpq -p # Checks synchronization status with peers
+
+systemctl restart ntpd # Restarts NTPD
+
+echo Checking NTP Status..
+for i in {15..1}; do echo -n "." && sleep 1; done # This counter was added to allow extra time for syncing, without this timer the syncing does not occur automatically, although when done manually the syncing occurs within a few seconds, in this case the syncing would not occur until after 10 seconds, 15 seconds are added just to be on the safe side, this was tested in 10+ VMs and worked successfully.
+
+ntpstat # Retrieve NTP Status
+
+echo "Synchronization Complete!"
+timedatectl # Detailed Synchronization Status
