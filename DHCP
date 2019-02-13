@@ -1,3 +1,9 @@
+#!/bin/bash
+#by: Anjum Touqeer
+#Date: 31 Dec 2018
+#Function: This script configures a DHCP Server
+#Script: DHCP.sh
+
 dhclient -r
 dhclient -v
 yum clean all
