@@ -1,0 +1,93 @@
+dhclient -r
+dhclient -v
+yum clean all
+yum install dhcp -y
+firewall-cmd --add-service=dhcp --permanent
+firewall-cmd --reload
+
+echo Enter Hostname to set it as DHCP Server name
+read hsname
+echo Enter IP to set it as DHCP Server IP
+read srvIP
+echo Enter Subnet IP to set as DHCP Server subnet
+read subIP
+echo Enter Gateway IP to add to DHCP Server
+read gatwIP
+echo Enter DNS IP to add to DHCP Server
+read dnsIP
+
+cp  /etc/sysconfig/network-scripts/ifcfg-ens33 /etc/sysconfig/network-scripts/ifcfg-ens33.bk
+cat > /etc/sysconfig/network-scripts/ifcfg-ens33 <<- EOF
+TYPE=Ethernet
+PROXY_METHOD=none
+BROWSER_ONLY=no
+BOOTPROTO=static
+DEFROUTE=yes
+IPV4_FAILURE_FATAL=no
+IPV6INIT=yes
+IPV6_AUTOCONF=yes
+IPV6_DEFROUTE=yes
+IPV6_FAILURE_FATAL=no
+IPV6_ADDR_GEN_MODE=stable-privacy
+NAME=ens33
+UUID=c39a3132-fecb-4688-aa6a-b83e4d8f09a3
+DEVICE=ens33
+HOSTNAME=$hsname
+IPADDR=$srvIP
+NETMASK=$subIP
+ADAPTER=ens33
+GATEWAY=$gatwIP
+DNS1=$dnsIP
+NM_CONTROLLED=no
+ONBOOT=yes # Allows the Vm to retain the assigned IP address even if the VM is restarted
+EOF
+echo Network configuration saved to /etc/sysconfig/network-scripts/ifcfg-ens33 file, updated file content is shown below
+
+more /etc/sysconfig/network-scripts/ifcfg-ens33
+
+echo Enter Subnetwork Address to add to dhcpd configuration file
+read subNet
+echo Subnet Mask entered in ifcfg-ens33 will be used
+echo Enter IP Range in 4 octet format with a space between the addresses
+read resRange
+echo Enter MAC Address of device to Reserved Static IP for
+read macAdd
+echo Enter Static IP to be Reserved
+read resIP
+
+cp  /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.bk
+cat > /etc/dhcp/dhcpd.conf <<- EOF
+# option definitions common to all supported networks
+option domain-name "L00012345.ie";
+option domain-name-servers ns1.L00012345.ie, ns2.L00012345.ie;
+default-lease-time 600;
+max-lease-time 7200;
+# This DHCP server is the official DHCP server for the local network
+authoritative;
+# This is a very basic subnet declaration.
+subnet $subNet netmask $subIP {
+range $resRange;
+}
+
+host CL1 {
+option host-name "CL1_COS.L00012345.ie";
+hardware ethernet $macAdd;
+fixed-address $resIP; }
+
+EOF
+
+echo Network configuration saved to /etc/dhcp/dhcpd.conf file, updated file content is shown below
+
+more /etc/dhcp/dhcpd.conf
+
+echo Change VM settings for this machine to VMNet2 Host-Only Network
+for i in {15..1}; do echo -n "." && sleep 1; done # Counter added to remind user to change VM network settings
+echo Adding DHCP to firewall
+firewall-cmd --add-service=dhcp --permanent
+echo Restarting Firewall
+firewall-cmd --reload
+
+echo Restarting Network..
+systemctl restart network
+echo The new system IP is..
+ip addr
