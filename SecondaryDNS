@@ -1,3 +1,8 @@
+#!/bin/bash
+#by: Anjum Touqeer
+#Date: 31 Dec 2018
+#Function: This script creates a Secondary DNS Server
+#Script: dnsSecondary.sh
 echo $'~~~~~~~~~~~ Acquiring IP ~~~~~~~~~~~'
 dhclient -r
 dhclient -v
