@@ -1,0 +1,116 @@
+#!/bin/bash
+#By: Anjum Touqeer
+#Date: 28 Nov 2018
+#Funcion: Multifunction Network Monitoring Tool
+#Prerequisites: This tool requires internet connection, NMAP tool, MUTT tool, SSH Keys RSA 4096 bit encryption installed in both client and server, and Superuser access (su/sudo)
+#File Name: mnetwork.sh
+
+#Release IP and reacquire new IP from DHCP server..
+echo "RELEASING IP.."
+
+        dhclient -r # -r switch releases the leased IP
+
+echo "ACQUIRING NEW IP.."
+
+        dhclient -v # -v switch displays on going DORA communication between DHCP and Client
+
+echo "NEW IP ACQUIRED.."
+
+echo "CREATING DATASTORAGE  FOLDER.."
+
+        mkdir datafolder
+
+echo "DATA STORAGE FOLDER CREATED.."
+
+#Install NMAP
+echo "THIS SCRIPT WILL INSTALL NMAP.."
+
+echo "DOWNLOADING NMAP.."
+
+        yum install nmap -y # -y switch adds yes to avoid user intervention when installing application
+
+echo "NMAP INSTALLED SUCCESSFULLY.."
+
+#Install mutt for email..
+echo "THIS SCRIPT WILL INSTALL MUTT EMAIL SERVICES.."
+
+echo "DOWNLOADING MUTT.."
+
+        yum install mutt -y
+
+echo "MUTT EMAIL SERVICE INSTALLED SUCCESSFULLY.."
+
+echo "INITIATING APPLICATION.."
+
+echo "###################################################################################"
+echo "			NETWORK SCANNER & MONITORING TOOL"
+echo "###################################################################################"
+
+echo "ENTER NETWORK IP TO SCAN.."
+
+        read chkv
+
+echo "ENTER CIDR VALUE"
+
+        read chkvv
+
+echo "SCANNING NETWORK "$chkv"/"$chkvv".."
+
+        nmap -sP "$chkv"/"$chkvv" | awk '/is up/ {print up}; {gsub (/\(|\)/,""); up = $NF}' > $chkv.txt # -sP switch performs a ping only scan. AWK is a data extraction+manipulation tool, the '/is up/ argument is passed to nmap to retrieve results for only devices that are alive, the {print up} commands displays IP of device that are alive, gsub uses regex expressions for replace string, in this case space, NF is an AWK variable that stores the received value (row in this case).
+
+        input=$chkv".txt" # file name added to a variable
+
+echo "FILE CREATED "$input
+
+echo "NETWORK SCAN COMPLETE, DATA SAVED TO "$input # calling the variable
+
+echo "IP ADDRESSES FOUND.."
+
+        cat $input # displaying the file content using cat
+
+                while IFS= read -r var # IFS is a word splitter (determines the boundary of the word), -r switch is for raw input, it disables escape characters such as backslash, while loops reads lines (IP addresses in this case) from the file 
+                do
+                        echo "CHECKING "$var" NETWORK STATUS.." # IP value retrieved from file
+
+                        if [ $(nc -z "$var" 22; echo $?) -eq 0 ]; then # NC is netcat, a network scanning tool, in this case used to scan if port 22 SSH port of devices in the IP address list, the -z switch ised to just scan the port without sending or receiving any data to or from server.
+
+                        echo $var" is ONLINE.."
+
+                        echo "COPYING PUBLIC KEY TO "$var" FOR SECURE COMMUNICATION.." # the IP value is used as a concatanation between string
+
+                        ssh-copy-id -i .ssh/id_rsa root@$var # the -i switch makes the SSh agent use the default id_rsa file
+
+                        echo "CONNECTING to "$var".."
+
+                        vara=$(ssh root@$var 'df -h; free -m;top -bn1 | grep load' < /dev/null) # vara is another variable, here used with command substitution to capture the value received in the stdout via < /dev/null, the df -h is a disk command to retrieve hdd space info, the free -m retrieves free memory info, the top -bn1 retrieves the CPU usage, showing only the CPU load using the grep loac pipe
+
+                        echo "SAVING "$var" .."
+
+                        echo $(date)$vara >> datafolder/$var.txt # date is appended to the text file everytime new data is retrieved
+
+                        echo $var" SAVED TO "$var.txt
+                else
+
+                        echo "$var is OFFLINE.." # if alive check condition fails, display as offline
+                fi
+        done < "$input" # input value for the loop command, in this case IP address from the list
+
+echo "PROCESS COMPLETED.."
+
+        zip -r datafolder.zip datafolder/* # zips all files inside datafolder, as all files are txt files
+
+echo "FILES ZIPPED FOR EMAIL.."
+
+        vaz=$chkv"/"$chkvv # variable to hold IP 2 values merged with a string
+
+echo "NETWORK DEVICES INFORMATION AS OF $(date)" | mutt -s "NETWORK MONITOR UPDATE FROM "$vaz -a "datafolder.zip" -c email@email.com # script to send email using mutt application, echo value in the start is for body text, -s switch is for subject, -a switch is for attachment files, -c switch is for email address
+
+        zx=$(find \data*.zip) # finds file with name starting with data
+
+        datv=$(date)$zx # appends date to the filename found in the above command
+
+echo $(date)" MAIL SENT FOR "$datv >> email.log # appends log data in log file with current date added to filename
+
+echo "THE FOLLOWING ACTIONS COMPLETED : " # simple echo message
+echo "FILES EMAILED TO ADMINISTRATOR" # simple echo message
+echo "EMAIL RECORD LOGGED IN FILE email.log" # simple echo message
