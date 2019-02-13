@@ -1,3 +1,9 @@
+#!/bin/bash
+# by: Anjum Touqeer
+# Date: 31 Dec 2018
+# Function: This script creates a Primary DNS Server
+# Script: dnsPrimary.sh
+
 echo $'~~~~~~~~~~~ Acquiring IP ~~~~~~~~~~~'
 dhclient -r
 dhclient -v
@@ -92,35 +98,35 @@ zone "." IN {
         file "named.ca";
 };
 
-zone "L00144445.local" { type master; file "L00144445.db"; allow-transfer { 192.168.102.192; }; notify yes; };
+zone "pDNS.local" { type master; file "pDNS.db"; allow-transfer { 192.168.102.192; }; notify yes; };
 
-zone "102.168.192.IN-ADDR.ARPA" { type master; file "54444100L.db"; allow-transfer { 192.168.102.192; }; notify yes; };
+zone "102.168.192.IN-ADDR.ARPA" { type master; file "pDNS.db"; allow-transfer { 192.168.102.192; }; notify yes; };
 
 include "/etc/named.rfc1912.zones";
 include "/etc/named.root.key";
 EOF
 
 echo $'~~~~~~~~~~~ Created Forward Lookup zone file ~~~~~~~~~~~'
-touch /var/named/L00144445.db
+touch /var/named/pDNS.db
 
 echo $'~~~~~~~~~~~ File permissions changed ~~~~~~~~~~~'
-chgrp named /var/named/L00144445.db
-chown named /var/named/L00144445.db
+chgrp named /var/named/pDNS.db
+chown named /var/named/pDNS.db
 
 echo $'~~~~~~~~~~~ Forward Lookup zone configured ~~~~~~~~~~~'
-cat << 'EOT' > /var/named/L00144445.db
+cat << 'EOT' > /var/named/pDNS.db
 $TTL 10
-$ORIGIN L00144445.local.
+$ORIGIN pDNS.local.
 
-@       IN SOA ns1.L00144445.local. admin.L00144445.local. (
+@       IN SOA ns1.pDNS.local. admin.pDNS.local. (
                                         0       ; serial
                                         10      ; refresh
                                         10      ; retry
                                         10      ; expire
                                         10 )    ; minimum
-        IN NS ns1.L00144445.local.
+        IN NS ns1.pDNS.local.
 
-        IN NS ns2.L00144445.local.
+        IN NS ns2.pDNS.local.
 
 ns1     IN A 192.168.102.191
 
@@ -139,19 +145,19 @@ cat << 'EOT' > /var/named/54444100L.db
 $TTL 10
 $ORIGIN 102.168.192.IN-ADDR.ARPA.
 
-@       IN SOA ns1.L00144445.local. admin.L00144445.local. (
+@       IN SOA ns1.pDNS.local. admin.pDNS.local. (
                                         0              ; serial
                                         10      ; refresh
                                         10      ; retry
                                         10      ; expire
                                         10 )    ; minimum
-        IN NS ns1.L00144445.local.
+        IN NS ns1.pDNS.local.
 
-        IN NS ns2.L00144445.local.
+        IN NS ns2.pDNS.local.
 
-191     IN PTR ns1.L00144445.local.
+191     IN PTR ns1.pDNS.local.
 
-192     IN PTR ns2.L00144445.local.
+192     IN PTR ns2.pDNS.local.
 EOT
 echo $'\n~~~~~~~~~~~ DNS configuration complete ~~~~~~~~~~~\n'
 
@@ -168,7 +174,7 @@ echo $'~~~~~~~~~~~ Checking DNS configuration file ~~~~~~~~~~~'
 named-checkconf -z
 
 echo $'\n~~~~~~~~~~~ Checking Forward Lookup zone file ~~~~~~~~~~~'
-named-checkzone L00144445.local /var/named/L00144445.db
+named-checkzone pDNS.local /var/named/pDNS.db
 
 echo $'\n~~~~~~~~~~~ Checking Reverse Lookup zone file ~~~~~~~~~~~\n'
 named-checkzone 102.168.192.in-addr.arpa /var/named/54444100L.db
