@@ -1,0 +1,187 @@
+#!/usr/bin/bash
+
+# Text Color
+RED='\033[0;31m'
+NC='\033[0m'
+
+#Log locations
+basedir=/data/storage/
+core=corefiles/
+phy=/run/PhyStat*
+arch=archive/log/
+dlog=log/
+
+echo "Computing data, and disk sizes.."
+
+logfolder=$(du -chm $basedir$dlog | awk 'END { print $1 }') >/dev/null 2>&1
+archivefolder=$(du -chm $basedir$arch | awk 'END { print $1 }') >/dev/null 2>&1
+corefolder=$(du -chm $basedir$core | awk 'END { print $1 }') >/dev/null 2>&1
+phyStat=$(du -chm $phy | awk 'END { print $1 }') >/dev/null 2>&1
+
+result=$(($logfolder + $archivefolder + $corefolder + $phyStat)) >/dev/null 2>&1
+archSpace=$(awk -v val=1.15 -v space=$result 'BEGIN{allspace=(val*space); print allspace;}') >/dev/null 2>&1
+reqSpace=$(echo $archSpace | awk '{print int($1+0.5)}') >/dev/null 2>&1
+availableSpace=$(df -hm /dev/sda6 | awk 'END { print $4 }' | sed 's/M//') >/dev/null 2>&1
+
+echo -e "THIS PKILL WILL BRING DOWN ${RED}* VME 3 | E14 | Site 1 *${NC}"
+read -p "Enter (y) key to continue, or any other key to exit" -n 1
+echo
+if [[ $REPLY =~ ^[Yy]$ ]] # If 1
+ then
+  stotal_time="$(date -u +%s)"
+  sarchive_time="$(date -u +%s)"
+
+if [ $reqSpace -lt $availableSpace ] # If 2
+ then
+
+  echo "Computing data, and disk sizes.."
+  echo -e "Log data size ${RED}~$result MB${NC}"
+
+  bkfol=$(date +'%d%b%Y_%H%M')
+
+  archName=VME3_$bkfol.tar
+  tar cvf $basedir$archName --files-from=/dev/null
+  echo "Archive $archName created in $basedir.."
+  echo "Initiating archiving.."
+  sleep 3
+
+sarch_time="$(date -u +%s)"
+
+  ctar=$(tar uvf $basedir$archName $basedir$core $phy $basedir$arch $basedir$dlog --warning=none --absolute-names > /dev/null 2>&1 & echo $!)
+  while kill -0 $ctar >/dev/null 2>&1
+   do
+    archval=$(ls -l $basedir$archName | awk '{print $5}')
+    archval1=$((archval / (1024*1024)))
+    archval2=$(echo $archval1 | awk '{print int($1+0.5)}')
+    echo -ne "Archived ${RED}~$archval2 MB${NC} of log data to $archName..\r"
+  done
+    echo -e "\nArchiving complete.."
+
+  flname=$archName.gz
+
+    echo -e "Compression file ${RED}$flname${NC} created in ${RED}$basedir${NC}.."
+    b=$(gzip $basedir$archName > /dev/null 2>&1 & echo $!)
+    sleep 1.5
+  while kill -0 $b >/dev/null 2>&1
+   do
+    comval=$(ls -l $basedir$flname | awk '{print $5}')
+    comval1=$((comval / (1024*1024)))
+    comval2=$(echo $comval1 | awk '{print int($1+0.5)}')
+    echo -ne "Compressed $flname to ${RED}~$comval2 MB${NC}..\r"
+   done
+  earchive_time="$(date -u +%s)"
+  tarchive_time1="$(($earchive_time-$sarchive_time))"
+  tarchive_time2=$(date -ud "@$tarchive_time1" "+ %M min %S sec")
+
+  tfile=$(find $basedir -type f -name $flname)
+  zipSize=$(du -chm $tfile | awk 'END { print $1 }')
+  echo -e "Archived and Compressed ~$result MB to ~$zipSize MB in $tarch_time2.."
+ else
+  echo -e "${RED}Disk space low for Backup, Archive, and Compression!${NC}"
+  echo -e "Log data size ${RED}~$result MB${NC}"
+  echo -e "Estimated space required for archiving ${RED}~$reqSpace MB${NC}"
+  echo -e "Available disk space ${RED}~$availableSpace MB${NC}"
+fi # If 2
+
+spkill_time="$(date -u +%s)"
+
+echo "Stopping All MNXT Services.."
+service mnxt stop > /dev/null 2>&1
+sleep 10
+
+# Running services in MNXT are 13, STOPPED are 7, total equals 20.
+while [ $(service mnxt status | grep STOPPED | wc -l) -ne 19 ] && \
+[ $(service mnxt status | grep RUNNING | grep manage_archive.sh | wc -l) -ne 1 ] || \
+[ $(service mnxt status | grep STOPPED | wc -l) -ne 20 ] && \
+[ $(service mnxt status | grep RUNNING | grep manage_archive.sh | wc -l) -ne 0 ]
+ do
+  service mnxt stop > /dev/null 2>&1
+  echo "Confirming MNXT Services.." | awk '{system("sleep 20");print}'
+done
+
+echo "All MNXT Services Stopped Successfully.."
+
+ssh 10.1.3.17 pkill -9 enodeb_l3 > /dev/null 2>&1
+echo -e "PKILL Issued to ${RED}CU 10.1.3.17${NC} for ${RED}VME 3${NC}.."
+
+sleep 10
+echo "Waiting for Required MNXT Services to Start.."
+
+service mnxt start > /dev/null 2>&1
+
+while [ $(service mnxt status | grep RUNNING | wc -l) -ne 13 ] &&  [ $(service mnxt status | grep 'l1\|l2' | grep RUNNING | wc -l) -ne 2 ]
+ do
+  service mnxt start > /dev/null 2>&1
+  echo "Waiting for required MNXT Services to Start.." | awk '{system("sleep 20");print}'
+done
+
+echo "Required MNXT Services Started.."
+
+echo "Checking Mid-haul Status.."
+# ssh -q switch for quiet, removes banner
+while [[ $(ssh -q 10.1.3.17 netstat -anp | grep -i sctp | grep ESTABLISHED | wc -l) -ne 2 ]]
+ do
+  echo "Establishing Mid-Haul.." | awk '{system("sleep 20");print}'
+done
+
+if [[ $(ssh -q 10.1.3.17 netstat -anp | grep -i sctp | grep ESTABLISHED | wc -l) -eq 2 ]] # If 3
+ then
+  echo "Mid-Haul Established.."
+  ssh -q 10.1.3.17 netstat -anp | grep -i sctp | grep ESTABLISHED
+  rm -rf /data/storage/corefiles/*
+  echo "Removed unwanted corefiles.."
+
+  epkill_time="$(date -u +%s)"
+  tpkill_time1="$(($epkill_time-$spkill_time))"
+  tpkill_time2=$(date -ud "@$tpkill_time1" "+ %M min %S sec")
+
+  echo -e "PKILL Completed on ${RED}VME 3${NC} in $tpkill_time2.."
+
+  sul_time="$(date -u +%s)"
+
+  echo "Connecting Log Server (10.0.3.6).."
+  echo "Initiating $flname upload.."
+  echo -e "Manual upload command (${RED}scp $tfile root@10.0.3.6:/root/MorayEast/VME3/${NC})"
+  scp -q $tfile root@10.0.3.6:/root/MorayEast/VME3/ & 2>/dev/null
+  sleep 3
+
+  lfsize=$(ls -l $basedir$flname | awk '{print $5}')
+
+  while [[ $(ssh -q root@10.0.3.6 ls -l /root/MorayEast/VME3/$flname | awk '{print $5}' & 2>/dev/null) -ne $lfsize ]]
+   do
+    byteval=$(ssh -q root@10.0.3.6 ls -l  /root/MorayEast/VME3/$flname | awk '{print $5}')
+    byteval1=$((byteval / (1024*1024)))
+    byteval2=$(echo $byteval1 | awk '{print int($1+0.5)}')
+    echo -ne "Uploaded ${RED}~$byteval2 MB${NC} of $flname..\r"
+  done
+
+  eul_time="$(date -u +%s)"
+  tul_time1="$(($eul_time-$sul_time))"
+  tul_time2=$(date -ud "@$tul_time1" "+ %M min %S sec")
+
+  bytesrec=$(ssh -q root@10.0.3.6 ls -l /root/MorayEast/VME3/$flname | awk '{print $5}' & 2>/dev/null)
+
+  if [ $bytesrec -eq $lfsize ] # If 4
+   then
+    echo -e "\n$flname transferred to Log Server (10.0.3.6).."
+    echo "$lfsize Bytes sent from DU 3 (172.17.70.2)"
+    echo "$bytesrec Bytes received at Log Server (10.0.3.6)"
+    rm -rf $tfile
+    echo -e "${RED}$flname${NC} saved in ${RED}/root/MorayEast/VME3/${NC}.."
+    echo "Local copy $flname deleted.."
+   else
+    echo "$flname Transfer failed!, bytes sent mismatch bytes received at Log Server.."
+    echo "$lfsize Bytes sent from DU 3 (172.17.70.2)"
+    echo "$bytesrec Bytes received by Log Server (10.0.3.6)"
+    echo -e "Manual upload command (${RED}scp $tfile root@10.0.3.6:/root/MorayEast/VME3/${NC})"
+  fi # If 4
+ else
+  echo "PKILL cancelled.."
+  exit 0
+ fi # If 3
+  etotal_time="$(date -u +%s)"
+  total_time1="$(($etotal_time-$stotal_time))"
+  total_time2=$(date -ud "@$total_time1" "+ %M min %S sec")
+
+  echo -e "Process on ${RED}VME 3${NC} completed in $total_time2.."
+fi # If 1
