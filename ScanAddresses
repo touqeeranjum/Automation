@@ -1,0 +1,71 @@
+# Text Color
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+#Log locations
+basedir=/data/storage/
+core=corefiles/
+run=/run
+phy=$run/PhyStat*.bin
+con=$run/ConsoleL1*.txt
+arch=archive/log/
+dlog=log/
+
+rru_ip_range=172.16.1.255
+
+active_rrus=$(ping -b -c 2 $rru_ip_range 2>/dev/null | grep "seq" | awk '{print $4}' | sed 's/.$//' | sort | uniq)
+
+now=$(date +'%d %b %Y | %H:%M:%S')
+#nowfile=$(date +'corereport_DU3_%Y%m%d%H%M%S')
+echo $now
+echo "-------------------------------------------------------------------------------------"
+
+   logfolder=$(du -chm $basedir$dlog | awk 'END { print $1 }') >/dev/null 2>&1
+   archivefolder=$(du -chm $basedir$arch | awk 'END { print $1 }') >/dev/null 2>&1
+   corefolder=$(du -chm $basedir$core | awk 'END { print $1 }') >/dev/null 2>&1
+   phyStat=$(du -chm $phy | awk 'END { print $1 }') >/dev/null 2>&1
+   conStat=$(du -chm $con | awk 'END { print $1 }') >/dev/null 2>&1
+
+   result=$(($logfolder + $archivefolder + $corefolder + $phyStat + $conStat)) >/dev/null 2>&1
+   archSpace=$(awk -v val=1.15 -v space=$result 'BEGIN{allspace=(val*space); print allspace;}') >/dev/null 2>&1
+   reqSpace=$(echo $archSpace | awk '{print int($1+0.5)}') >/dev/null 2>&1
+   availableSpace=$(df -hm /dev/sda6 | awk 'END { print $4 }' | sed 's/M//') >/dev/null 2>&1
+
+   if [ $reqSpace -lt $availableSpace ]
+    then
+    echo -e "${BLUE}Backup Possible, Log Data size $result MB, Free Space $availableSpace MB${NC}"
+   else
+    echo -e "${RED}Backup Not Possible, Log Data size $result MB, Free Space $availableSpace MB${NC}"
+  fi
+echo "-------------------------------------------------------------------------------------"
+#echo "Log Size : , Back Size"
+df -kh | tr -d '%' | awk '$5 > 79  {printf "%s\t %s%\n", $1,$5}' > disk.txt
+echo "Disks using 80% or more space appear here"
+cat disk.txt
+echo "-------------------------------------------------------------------------------------"
+for rru in $active_rrus
+do
+	rru_cnct.sh $rru >> $rru.txt
+
+    sed -i '/spawn/d;/Trying/d;/Escape/d;/Please/d;/exit/d;/Connection/d;/Welcome to MTI Telnet Server/d;/tssi/d;s/\r//g' $rru.txt
+
+done
+
+seq 7 | paste 172*.txt | sed -e "s/\r//g" | expand -t15 > result.txt
+cat result.txt
+rm -rf result.txt
+rm -rf disk.txt
+rm -rf 172*.txt
+echo "-------------------------------------------------------------------------------------"
+echo "$(service mnxt status | grep l1 | awk '{print $1" " $4}') | $(service mnxt status | grep l2 | awk '{print $1" " $4}') | $(ssh -q 10.1.3.18 netstat -anp | grep sctp | grep 44444 | grep ESTABLISHED | awk '{print "Mid-haul " $6}') | $(ssh -q 10.1.3.18 netstat -anp | grep sctp | grep 36412 | grep ESTABLISHED | awk '{print "Back-haul " $6}')"
+echo "-------------------------------------------------------------------------------------"
+cFiles=$(find /data/storage/corefiles/ -name *.gz |wc -l)
+if [[ $cFiles -gt 0 ]];
+then
+echo "$cFiles Corefile(s) found.." #| tee -a /home/bin/$nowfile.txt
+echo $(ls /data/storage/corefiles/) #| tee -a /home/bin/$nowfile.txt
+else
+echo "No corefiles"
+fi
+echo "-------------------------------------------------------------------------------------"
