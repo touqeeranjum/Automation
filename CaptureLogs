@@ -1,0 +1,192 @@
+#!/bin/bash
+
+# Text Color
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+rootd=/root
+
+datetimefunc ()
+  {
+   now=$(date +'%d%b%Y_%H%M%S')
+}
+
+scfunc ()
+  {
+
+   for i in 1 2
+    do
+     if [[ $i == 1 ]]
+      then
+       datetimefunc
+       predir="SC_VME3_PRE_$now"
+       pretime=$now
+       ival1=$i
+       logscapture $predir $pretime $ival1
+    fi
+
+     if [[ $i == 2 ]]
+      then
+      datetimefunc
+      postdir="SC_VME3_POST_$now"
+      posttime=$now
+      ival2=$i
+      logscapture $postdir $posttime $ival2
+    fi
+   done
+}
+
+logscapture ()
+  {
+
+   dirname=$1
+   filname=$2
+   ifval=$3
+
+   if [[ $ifval == 1 ]]
+    then
+     echo -e "$(date +"%T.%3N") ${BLUE}Commencing PRE logs capture..${NC}.."
+  fi
+
+   if [[ $ifval == 2 ]]
+    then
+     echo -e "$(date +"%T.%3N") ${BLUE}COmmencing POST logs capture..${NC}.."
+  fi
+
+   mkdir $dirname
+   echo -e "$(date +"%T.%3N") Log directory ${BLUE}$dirname${NC} created in root.."
+   touch $dirname/$filname.txt
+   echo -e "$(date +"%T.%3N") Log file ${BLUE}$filname.txt${NC} created.."
+   echo -e "$(date +"%T.%3N") ${RED}In a different window, copy getcellstats information..${NC}"
+   echo -e "$(date +"%T.%3N") ${RED}Paste into${NC}${BLUE} $dirname/$filname.txt${NC}${RED} and save file..${NC}"
+   stty -echo
+   read -p "$(echo -e "$(date +"%T.%3N")" ${RED}"Then press (c) key to continue, any other key terminates process.."${NC})" -n 1
+   echo ""
+   stty echo
+   if [[ $REPLY =~ ^[Cc]$ ]]
+    then
+     echo -e "$(date +"%T.%3N") ${BLUE}($REPLY) key pressed, continuing..${NC}"
+     echo -e "$(service mnxt status | grep l1 | awk '{print $1" " $4}')\n" >> $dirname/$filname.txt
+     echo -e "$(date +"%T.%3N") ${BLUE}Appended L1 status..${NC}"
+
+     echo -e "$(service mnxt status | grep l2 | awk '{print $1" " $4}')\n" >> $dirname/$filname.txt
+     echo -e "$(date +"%T.%3N") ${BLUE}Appended L2 status..${NC}"
+
+     echo -e "$(ssh -q 10.1.3.18 netstat -anp | grep sctp | grep 44444 | grep ESTABLISHED | awk '{print "Mid-haul " $6}')\n" >> $dirname/$filname.txt
+     echo -e "$(date +"%T.%3N") ${BLUE}Appended Mid-Haul status..${NC}"
+
+     echo -e "$(ssh -q 10.1.3.18 netstat -anp | grep sctp | grep 36412 | grep ESTABLISHED | awk '{print "Back-haul " $6}')\n" >> $dirname/$filname.txt
+     echo -e "$(date +"%T.%3N") ${BLUE}Appended Back-Haul status..${NC}"
+    else
+     rm -rf $dirname
+     echo -e "$(date +"%T.%3N") ${BLUE}$dirname removed..${NC}"
+     echo -e "$(date +"%T.%3N") ${RED}($REPLY) key pressed, process terminated by user!..${NC}"
+     exit 0
+   fi
+
+   cupcapfile="CU_$filname.pcap"
+   dupcapfile="DU_$filname.pcap" 
+
+   echo -e "$(date +"%T.%3N") ${BLUE}Preparing for pcap packet capture..${NC}"
+
+   cupcap=$(ssh -q root@10.1.3.17 tcpdump -c 4000 -i any sctp -w /root/$cupcapfile > /dev/null 2>&1 & echo $!)
+   sleep 2
+   dupcap=$(tcpdump -c 4000 -i any sctp -w $rootd/$dirname/$dupcapfile > /dev/null 2>&1 & echo $!)
+   sleep 2
+   while kill -0 $dupcap >/dev/null 2>&1
+    do
+     while kill -0 $cupcap >/dev/null 2>&1
+      do
+       dupackets=$(tcpdump -ttttnnr $rootd/$dirname/$dupcapfile > $rootd/$dirname/DU.tmp 2>&1)
+       cupackets=$(ssh -q root@10.1.3.17 "tcpdump -ttttnnr /root/$cupcapfile > /root/CU.tmp 2>&1")
+
+       sed -i '/reading/d' $rootd/$dirname/DU.tmp
+       ssh -q root@10.1.3.17 sed -i '/reading/d' /root/CU.tmp
+
+       duresult=$(cat $rootd/$dirname/DU.tmp | wc -l)
+       curesult=$(ssh -q root@10.1.3.17 cat /root/CU.tmp | wc -l)
+
+      echo -ne "$(date +"%T.%3N") Captured packets from DU ${BLUE}$duresult${NC} | CU ${BLUE}$curesult${NC}..\r"
+    done
+   done
+  echo ""
+
+   if [[ -n $(find $rootd/$dirname -type f -name $cupcapfile) ]]
+    then
+     echo -e "$(date +"%T.%3N") ${BLUE}$cupcapfile${NC} ${RED}failed to download${NC}.."
+    else
+     scp -q root@10.1.3.17:/root/$cupcapfile $rootd/$dirname & 2>/dev/null
+     sleep 1
+     echo -e "$(date +"%T.%3N") ${BLUE}$cupcapfile${NC} downloaded in ${BLUE}$dirname${NC}.."
+     rm -rf $dirname/DU.tmp
+     rm -rf $dirname/CU.tmp
+     rm -rf $rootd/1
+     ssh -q root@10.1.3.17 "rm -rf /root/$cupcapfile; rm -rf /root/CU.tmp"
+     echo -e "$(date +"%T.%3N") ${BLUE}Temporary files deleted..${NC}"
+  fi
+
+   rru_ip_range=172.16.1.255
+   active_rrus=$(ping -b -c 2 $rru_ip_range 2>/dev/null | grep "seq" | awk '{print $4}' | sed 's/.$//' | sort | uniq)
+
+   echo -e "$(date +"%T.%3N") ${BLUE}Querying RRU..${NC}"
+   for rru in $active_rrus
+    do
+     fetchlogs.sh $rru >> $dirname/$filname.txt
+  done
+
+   echo -e "$(date +"%T.%3N") Appended RRU queries to ${BLUE}$filname.txt${NC}.."
+   echo -e "$(date +"%T.%3N") ${BLUE}Removing verbose data..${NC}"
+
+   sed -i '/spawn/d;/Trying/d;/Escape/d;/Please/d;/exit/d;/Connection/d' $dirname/$filname.txt
+
+   echo -e "$(date +"%T.%3N") ${BLUE}Archiving $dirname..${NC}"
+
+   if [[ $ifval == 1 ]]
+    then
+     arcName=$(echo "SC_Logs_$filname.tar")
+     ardirname=$(echo "$dirname")
+     tar cvf $rootd/$arcName --files-from=/dev/null
+     sleep 3
+     ctar=$(tar uvf $rootd/$arcName -C $rootd $ardirname --warning=none --absolute-names > /dev/null 2>&1 & echo $!)
+     archval=$(ls -l $rootd/$arcName | awk '{print $5}')
+     echo -e "$(date +"%T.%3N") ${BLUE}$arcName${NC} archive size ${BLUE}$archval bytes${NC}.."
+     echo -e "$(date +"%T.%3N") ${BLUE}PRE logs capture complete..${NC}.."
+  fi
+   
+   if [[ $ifval == 2 ]]
+    then
+     ctar=$(tar uvf $rootd/$arcName -C $rootd $dirname --warning=none --absolute-names > /dev/null 2>&1 & echo $!)
+     archval=$(ls -l $rootd/$arcName | awk '{print $5}')
+     echo -e "$(date +"%T.%3N") ${BLUE}$arcName${NC} archive size ${BLUE}$archval bytes${NC}.."
+     echo -e "$(date +"%T.%3N") ${BLUE}POST logs capture complete..${NC}.."
+  fi
+
+   echo -e "$(date +"%T.%3N") ${BLUE}Commencing backup..${NC}"
+
+   source bac.sh $dirname
+
+  if [[ $ifval == 2 ]]
+   then
+     delfiles $ardirname $dirname
+ fi
+
+}
+
+delfiles ()
+   {
+
+    ardirname1=$1
+    dirname1=$2
+
+    rm -rf /data/storage/1
+    rm -rf /root/1
+
+    rm -rf $ardirname1
+    rm -rf $dirname1
+    echo -e "$(date +"%T.%3N") ${BLUE}Removed unwanted files, directories..${NC}.."
+    echo -e "$(date +"%T.%3N") ${BLUE}PRE and POST logs capture complete..${NC}.."
+
+}
+
+scfunc
