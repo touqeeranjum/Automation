@@ -1,0 +1,149 @@
+#!/bin/bash
+
+logfilename=parameter_change.log
+mplanefile=/etc/systemd/system/mplane.service
+
+allkubes=$(kubectl get nodes -A -o name | grep worker)
+
+function logfile ()
+   {
+      if ! test -f $logfilename
+      then
+         touch $logfilename
+   fi
+}
+
+function logtofile ()
+   {
+      tee -a $logfilename
+}
+
+function paramchange ()
+   {
+      newparam=TimeoutStartSec=43200min
+
+       read -p "Enter Worker Name For List Of RU : " kubeworker
+
+       for rruaddr in $(ssh -q $kubeworker arp -n | grep 10.42.8 | grep ether | awk '{print $1}')
+         do
+          echo "RU Connected To $kubeworker : $rruaddr | Pre Change Parameter Value : $currparam" | logtofile
+      done
+
+      echo "Starting Parameter Change For Each RU in $kubeworker"
+
+       for rruaddr in $(ssh -q $kubeworker arp -n | grep 10.42.8 | grep ether | awk '{print $1}')
+         do
+        currparam=$(ssh -q $kubeworker ssh -q $rruaddr cat $mplanefile | grep -i TimeoutStartSec=)
+
+        if [[ ! $currparam == $newparam ]]
+         then
+         ssh -q $kubeworker ssh -q $rruaddr "sed -i '/^$currparam/s/.*/$newparam/' $mplanefile"
+         chknewval=$(ssh -q $kubeworker ssh -q $rruaddr cat $mplanefile | grep -i TimeoutStartSec=)
+         echo "Changed Parameter From $currparam To $chknewval" | logtofile
+         echo "Rebooting $rruaddr" | logtofile
+
+         ssh -q $kubeworker ssh -q $rruaddr reboot
+         sleep 15
+
+         start="$(( $(date +%s) + 90))"
+         while [ "$start" -ge $(date +%s) ]
+         do
+          mins="$(($(($(( $start - $(date +%s) )) * 1 )) / 60))"
+          time="$(( $start - `date +%s` ))"
+        if [[ $(ssh -q $kubeworker ping -w 1 $rruaddr | grep ttl) ]]
+         then
+         echo -e "\nPing Response Received From $rruaddr" | logtofile
+          break
+         else
+          printf 'Timeout In %s min %s sec, Waiting Ping Response From %s\r' "$mins" "$(date -u -d "@$time" +%S)" "$rruaddr" | logtofile
+          sleep 0.1
+         fi
+         done
+
+         start="$(( $(date +%s) + 400))"
+         file="/tmp/logs/radio_status"
+         while [ "$start" -ge $(date +%s) ]
+         do
+          mins="$(($(($(( $start - $(date +%s) )) * 1 )) / 60))"
+          time="$(( $start - `date +%s` ))"
+
+          if [[ ! $(ssh -q $kubeworker ssh -q $rruaddr "ls -l /tmp/logs/radio_status 2> /dev/null") ]]
+           then
+           printf 'Timeout In %s min %s sec, Waiting For Radio Status File\r' "$mins" "$(date -u -d "@$time" +%S)" | logtofile
+           else
+          tailfile=$(ssh -q $kubeworker ssh -q $rruaddr tail -n 1 /tmp/logs/radio_status)
+          printf 'Timeout In %s min %s sec, %s\r' "$mins" "$(date -u -d "@$time" +%S)" "$tailfile" | logtofile
+          last_line=$(ssh -q $kubeworker ssh -q $rruaddr tail -n 1 "$file")
+
+           if [[ "$last_line" == "[INFO] Launching o_ru_app" ]]
+           then
+           echo -e "\nWaiting For TXMeanPower Of $rruaddr" | logtofile
+            break
+           fi
+           sleep 0.1
+           fi
+          done
+
+         start="$(( $(date +%s) + 180))"
+
+         while [ "$start" -ge $(date +%s) ]
+          do
+           mins="$(($(($(( $start - $(date +%s) )) * 1 )) / 60))"
+           time="$(( $start - `date +%s` ))"
+
+          chknum=$(ssh -q $kubeworker ssh -q $rruaddr TXMeanPower | awk 'FNR==1 {print $4}')
+
+           if [[ ! "$chknum" =~ [0-9] ]]
+          then
+           printf 'Timeout In %s min %s sec, Waiting For TXMeanPower Of %s\r' "$mins" "$(date -u -d "@$time" +%S)" "$rruaddr" | logtofile
+         fi
+
+           if [[ "$chknum" =~ [0-9] ]]
+             then
+             chktx=$(ssh -q $kubeworker ssh -q $rruaddr TXMeanPower | awk 'FNR==1 {print $1" "$2" "$3" "$4" "$5}' )
+             echo "$rruaddr Is Transmitting Now" | logtofile
+             echo "TXMeanPower : $chktx" | logtofile
+            break
+            fi
+      done
+   fi
+   done
+}
+
+function rrucheckscall ()
+   {
+     kubeworker=$1
+     rruaddr=$2
+
+     echo "======= RRU $rruaddr =======" | logtofile i>/dev/null
+     dateval=$(ssh -q $kubeworker ssh -q $rruaddr date | logtofile)
+     uptimeval=$(ssh -q $kubeworker ssh -q $rruaddr uptime | sed 's/.*up \([^,]*\), .*/\1/' | logtofile)
+     echo "" | logtofile >/dev/null
+
+     echo "======= RRU $rruaddr TXMeanPower =======" | logtofile >/dev/null
+     txval=$(ssh -q $kubeworker ssh -q $rruaddr TXMeanPower | logtofile >/dev/null)
+     echo "" | logtofile >/dev/null
+
+      currparam=$(ssh -q $kubeworker ssh -q $rruaddr cat $mplanefile | grep -i TimeoutStartSec=)
+
+      echo "$kubeworker | $rruaddr | Parameter Value : $currparam" | logtofile
+      echo "" | logtofile >/dev/null
+}
+
+function findnodes ()
+   {
+    for kubeworkers in $allkubes;
+         do
+            kubeworker=$( echo $kubeworkers | cut -c 6- )
+             for rruaddr in $(ssh -q $kubeworker arp -n | grep 10.42.8 | grep ether | awk '{print $1}')
+                  do
+                     rrucheckscall $kubeworker $rruaddr
+               done
+      done
+}
+
+logfile
+
+findnodes
+
+paramchange
