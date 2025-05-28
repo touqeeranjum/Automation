@@ -1,0 +1,56 @@
+#!/usr/bin/expect
+
+# Set time out and pass the IP to connect to
+set timeout 20
+set ip [lindex $argv 0]
+
+spawn telnet $ip
+
+# Run sanity Checks
+expect ">> " {
+send "get tssi\r" 
+sleep 1
+}
+expect ">> " {
+send "get rfstatus\r"
+sleep 1
+}
+expect ">> " {
+send "get rfcarriers\r"
+sleep 1
+}
+expect ">> " {
+send "get powerlevels\r"
+sleep 1
+}
+expect ">> " {
+send "get ptpstatus\r"
+sleep 1
+}
+expect ">> " {
+send "get ptpstatistics\r"
+sleep 1
+}
+expect ">> " {
+send "get vswr\r"
+sleep 1
+}
+expect ">> " {
+send "get alarms\r"
+sleep 1
+}
+expect ">> " {
+send "get rssi 0 1 0\r"
+sleep 1
+}
+expect ">> " {
+send "get drvdspcpoffset\r"
+sleep 1
+}
+expect ">> " {
+send "get drvdspcounters\r"
+sleep 1
+send "exit\r"
+}
+
+interact
