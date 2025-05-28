@@ -1,0 +1,166 @@
+#!/bin/bash
+
+# VME 3 Script
+
+# Text Color
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+#Log locations
+basedir=/data/storage/
+core=corefiles/
+run=/run
+phy=$run/PhyStat*.bin
+con=$run/ConsoleL1*.txt
+arch=archive/log/
+dlog=log/
+
+# stotal_time="$(date -u +%s)"
+
+computesizes ()
+  {
+
+   echo -e "$(date +"%T.%3N") ${BLUE}Computing data, and disk sizes..${NC}"
+
+   logfolder=$(du -chm $basedir$dlog | awk 'END { print $1 }') >/dev/null 2>&1
+   archivefolder=$(du -chm $basedir$arch | awk 'END { print $1 }') >/dev/null 2>&1
+   corefolder=$(du -chm $basedir$core | awk 'END { print $1 }') >/dev/null 2>&1
+   phyStat=$(du -chm $phy | awk 'END { print $1 }') >/dev/null 2>&1
+   conStat=$(du -chm $con | awk 'END { print $1 }') >/dev/null 2>&1
+
+   result=$(($logfolder + $archivefolder + $corefolder + $phyStat + $conStat)) >/dev/null 2>&1
+   archSpace=$(awk -v val=1.15 -v space=$result 'BEGIN{allspace=(val*space); print allspace;}') >/dev/null 2>&1
+   reqSpace=$(echo $archSpace | awk '{print int($1+0.5)}') >/dev/null 2>&1
+   availableSpace=$(df -hm /dev/sda6 | awk 'END { print $4 }' | sed 's/M//') >/dev/null 2>&1
+
+}
+
+checkdiskspace ()
+  {
+
+   computesizes
+
+   if [ $reqSpace -lt $availableSpace ]
+    then
+    createarchive $1
+   else
+    echo -e "$(date +"%T.%3N") ${RED}Backup failed!..${NC}.."
+    echo -e "$(date +"%T.%3N") ${RED}Log data size $result MB, space available $availableSpace MB..${NC}"
+    exit 0
+  fi
+
+}
+
+createarchive ()
+  {
+
+   cName=$1
+
+   echo -e "$(date +"%T.%3N") Log data size ${BLUE}$result MB${NC}..\r"
+
+   bkfol=$(date +'%d%b%Y_%H%M')
+
+   if [ -z "$cName" ]
+    then
+     archName=VME3_$bkfol.tar
+    else
+     archName=$cName.tar
+   fi
+
+   tar cvf $basedir$archName --files-from=/dev/null
+
+   echo -e "$(date +"%T.%3N") Archive ${BLUE}$archName${NC} created in ${BLUE}$basedir${NC}.."
+   sleep 3
+
+   tar uvf $basedir$archName -C $phy $(cd $run ; echo $phy) >/dev/null 2&>1 &
+
+   ctar=$(tar uvf $basedir$archName -C $basedir $arch $dlog $core $phy $con --warning=none --absolute-names > /dev/null 2>&1 &
+echo $!)
+   while kill -0 $ctar >/dev/null 2>&1
+    do
+     archval=$(ls -l $basedir$archName | awk '{print $5}')
+     archval1=$((archval / (1024*1024)))
+     archval2=$(echo $archval1 | awk '{print int($1+0.5)}')
+
+     echo -ne "$(date +"%T.%3N") ${BLUE}$archName${NC} archive size ${BLUE}$archval2 MB${NC}..\r"
+   done
+  echo ""
+
+  flname=$archName.gz
+
+    b=$(gzip $basedir$archName > /dev/null 2>&1 & echo $!)
+    sleep 1.5
+  while kill -0 $b >/dev/null 2>&1
+   do
+    comval=$(ls -l $basedir$flname | awk '{print $5}')
+    comval1=$((comval / (1024*1024)))
+    comval2=$(echo $comval1 | awk '{print int($1+0.5)}')
+
+    echo -ne "$(date +"%T.%3N") ${BLUE}$flname${NC} compressed archive size ${BLUE}$comval2 MB${NC}..\r"
+   done
+  echo ""
+  rm -rf /data/storage/1
+  rm -rf /root/1
+}
+
+logfileupload ()
+  {
+
+   tfile=$(find $basedir -type f -name $flname)
+
+   echo -e "$(date +"%T.%3N") ${BLUE}Connecting Log Server (10.0.3.6)..${NC}"
+   echo -e "$(date +"%T.%3N") Initiating ${BLUE}$flname${NC} upload.."
+   echo -e "$(date +"%T.%3N") Manual upload command (${BLUE}scp $tfile root@10.0.3.6:/root/MorayEast/VME3/${NC}).."
+
+   scp -q $tfile root@10.0.3.6:/root/MorayEast/VME3/ & 2>/dev/null
+   sleep 3
+
+   lfsize=$(ls -l $basedir$flname | awk '{print $5}')
+
+   while [[ $(ssh -q root@10.0.3.6 ls -l /root/MorayEast/VME3/$flname | awk '{print $5}' & 2>/dev/null) -ne $lfsize ]]
+    do
+     byteval=$(ssh -q root@10.0.3.6 ls -l  /root/MorayEast/VME3/$flname | awk '{print $5}')
+     byteval1=$((byteval / (1024*1024)))
+     byteval2=$(echo $byteval1 | awk '{print int($1+0.5)}')
+     diva=$(awk -v var1="$byteval2" -v var2="$comval2" 'BEGIN {print var1/var2*100}')
+     dval=$(echo $diva | awk '{print int($1+0.5)}')
+
+    echo -ne "$(date +"%T.%3N") ${BLUE}$byteval2 MB ${NC}(${BLUE}$dval%${NC}) of ${BLUE}$flname${NC} uploaded..\r"
+  done
+
+}
+
+logfilesizecheck ()
+  {
+
+   bytesrec=$(ssh -q root@10.0.3.6 ls -l /root/MorayEast/VME3/$flname | awk '{print $5}' & 2>/dev/null)
+
+   if [ $bytesrec -eq $lfsize ]
+    then
+     echo -e "\n$(date +"%T.%3N") ${BLUE}$flname${NC} transfer successful..${NC}.."
+     echo -e "$(date +"%T.%3N") ${BLUE}$lfsize${NC} bytes sent..${NC}.."
+     echo -e "$(date +"%T.%3N") ${BLUE}$bytesrec${NC} bytes received..${NC}"
+
+     rm -rf $tfile
+
+     echo -e "$(date +"%T.%3N") ${BLUE}$flname${NC} saved in ${BLUE}/root/MorayEast/VME3/${NC}.."
+     echo -e "$(date +"%T.%3N") Deleted local copy of ${BLUE}$flname${NC}.."
+    else
+     echo -e "$(date +"%T.%3N") ${RED}$flname transfer failed!, bytes mismatch..${NC}"
+     echo -e "$(date +"%T.%3N") ${RED}$lfsize bytes sent..${NC}"
+     echo -e "$(date +"%T.%3N") ${RED}$bytesrec bytes received..${NC}"
+     echo -e "$(date +"%T.%3N") Manual upload command (${RED}scp $tfile root@10.0.3.6:/root/MorayEast/VME3/${NC}).."
+  fi
+
+}
+
+checkdiskspace $1
+
+logfileupload
+
+logfilesizecheck
+
+# etotal_time="$(date -u +%s)"
+# total_time1="$(($etotal_time-$stotal_time))"
+# total_time2=$(date -ud "@$total_time1" "+ %M min %S sec")
